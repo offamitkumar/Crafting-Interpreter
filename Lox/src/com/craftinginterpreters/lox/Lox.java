@@ -4,7 +4,9 @@ import java.io.*;
 import java.util.List;
 
 public class Lox {
+    private static final Interpreter interpreter = new Interpreter();
     static boolean errorFound = false, interactiveShell = false;
+    static boolean hadRuntimeError = false;
 
     public static void main(String[] args) throws IOException {
         if (args.length > 1) {
@@ -30,6 +32,9 @@ public class Lox {
             if (errorFound && (!interactiveShell)) {
                 System.exit(65);
             }
+            if (hadRuntimeError && (!interactiveShell)) {
+                System.exit(70);
+            }
             if (interactiveShell) {
                 if (errorFound) errorFound = false;
                 System.out.print(">");
@@ -46,7 +51,7 @@ public class Lox {
         // Stop if there was a syntax error.
         if (errorFound) return;
 
-        System.out.println(new AstPrinter().print(expression));
+        interpreter.interpret(expression);
     }
 
     static void error(int line, String message) {
@@ -73,4 +78,11 @@ public class Lox {
             report(token.line, " at '" + token.lexeme + "'", -1, message);
         }
     }
+
+    static void runtimeError(RuntimeError error) {
+        System.err.println(error.getMessage() +
+                "\n[line " + error.token.line + "]");
+        hadRuntimeError = true;
+    }
+
 }
