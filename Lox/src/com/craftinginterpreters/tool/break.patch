@@ -1,0 +1,379 @@
+diff --git a/Lox/src/com/craftinginterpreters/lox/Expr.java b/Lox/src/com/craftinginterpreters/lox/Expr.java
+index 5109ec1..42ef866 100644
+--- a/Lox/src/com/craftinginterpreters/lox/Expr.java
++++ b/Lox/src/com/craftinginterpreters/lox/Expr.java
+@@ -6,6 +6,7 @@ abstract class Expr {
+   interface Visitor<R> {
+     R visitAssignExpr(Assign expr);
+     R visitBinaryExpr(Binary expr);
++    R visitBreakExpr(Break expr);
+     R visitGroupingExpr(Grouping expr);
+     R visitLiteralExpr(Literal expr);
+     R visitLogicalExpr(Logical expr);
+@@ -42,6 +43,16 @@ abstract class Expr {
+     final Token operator;
+     final Expr right;
+   }
++  static class Break extends Expr {
++    Break() {
++    }
++
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitBreakExpr(this);
++    }
++
++  }
+   static class Grouping extends Expr {
+     Grouping(Expr expression) {
+       this.expression = expression;
+diff --git a/Lox/src/com/craftinginterpreters/lox/Interpreter.java b/Lox/src/com/craftinginterpreters/lox/Interpreter.java
+index a0de8a8..7eceaec 100644
+--- a/Lox/src/com/craftinginterpreters/lox/Interpreter.java
++++ b/Lox/src/com/craftinginterpreters/lox/Interpreter.java
+@@ -177,6 +177,11 @@ class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> {
+         return null;
+     }
+ 
++    @Override
++    public Object visitBreakExpr(Expr.Break expr) {
++        throw new RuntimeException();
++    }
++
+     void interpret(List<Stmt> statements) {
+         try {
+             for (Stmt statement : statements) {
+diff --git a/Lox/src/com/craftinginterpreters/lox/Parser.java b/Lox/src/com/craftinginterpreters/lox/Parser.java
+index b5d46fd..4d2e2f5 100644
+--- a/Lox/src/com/craftinginterpreters/lox/Parser.java
++++ b/Lox/src/com/craftinginterpreters/lox/Parser.java
+@@ -13,6 +13,7 @@ class Parser {
+ 
+     private final List<Token> tokens;
+     private int current = 0;
++    private int counter = 0;
+ 
+     Parser(List<Token> tokens) {
+         this.tokens = tokens;
+@@ -34,12 +35,21 @@ class Parser {
+         if (match(FOR)) return forStatement();
+         if (match(IF)) return ifStatement();
+         if (match(WHILE)) return whileStatement();
++        if (match(BREAK)) return breakStatement();
+         if (match(PRINT))
+             return printStatement();
+         if (match(LEFT_BRACE)) return new Stmt.Block(block());
+         return expressionStatement();
+     }
+ 
++    private Stmt breakStatement() {
++        if (counter == 0) {
++            error(previous(), "Must be inside a loop to use 'break'.");
++        }
++        consume(SEMICOLON, "Expect ';' after 'break'.");
++        return new Stmt.Break();
++    }
++
+     private Stmt forStatement() {
+         consume(LEFT_PAREN, "Expect '(' after 'for'.");
+         Stmt initializer;
+@@ -61,18 +71,19 @@ class Parser {
+             increment = expression();
+         }
+         consume(RIGHT_PAREN, "Expect ')' after for clauses.");
++        counter++;
+         Stmt body = statement();
+         if (increment != null) {
+-            body = new Stmt.Block(
+-                    Arrays.asList(
+-                            body,
+-                            new Stmt.Expression(increment)));
++            body = new Stmt.Block(Arrays.asList(
++                    body,
++                    new Stmt.Expression(increment)));
+         }
+         if (condition == null) condition = new Expr.Literal(true);
+         body = new Stmt.While(condition, body);
+         if (initializer != null) {
+             body = new Stmt.Block(Arrays.asList(initializer, body));
+         }
++        counter--;
+         return body;
+     }
+ 
+@@ -119,11 +130,13 @@ class Parser {
+     }
+ 
+     private Stmt whileStatement() {
++        counter ++;
+         consume(LEFT_PAREN, "Expect '(' after 'while'.");
+         Expr condition = expression();
+         consume(RIGHT_PAREN, "Expect ')' after condition.");
+         Stmt body = statement();
+ 
++        counter --;
+         return new Stmt.While(condition, body);
+     }
+ 
+diff --git a/Lox/src/com/craftinginterpreters/lox/Scanner.java b/Lox/src/com/craftinginterpreters/lox/Scanner.java
+index 3c32a00..e4e3596 100644
+--- a/Lox/src/com/craftinginterpreters/lox/Scanner.java
++++ b/Lox/src/com/craftinginterpreters/lox/Scanner.java
+@@ -38,6 +38,7 @@ class Scanner {
+         keywords.put("true", TRUE);
+         keywords.put("var", VAR);
+         keywords.put("while", WHILE);
++        keywords.put("break", BREAK);
+     }
+ 
+     List<Token> scanTokens() {
+diff --git a/Lox/src/com/craftinginterpreters/lox/Stmt.java b/Lox/src/com/craftinginterpreters/lox/Stmt.java
+index 029104a..e6d540d 100644
+--- a/Lox/src/com/craftinginterpreters/lox/Stmt.java
++++ b/Lox/src/com/craftinginterpreters/lox/Stmt.java
+@@ -3,105 +3,94 @@ package com.craftinginterpreters.lox;
+ import java.util.List;
+ 
+ abstract class Stmt {
+-    interface Visitor<R> {
+-        R visitBlockStmt(Block stmt);
+-
+-        R visitExpressionStmt(Expression stmt);
+-
+-        R visitIfStmt(If stmt);
+-
+-        R visitPrintStmt(Print stmt);
+-
+-        R visitVarStmt(Var stmt);
+-
+-        R visitWhileStmt(While stmt);
++  interface Visitor<R> {
++    R visitBlockStmt(Block stmt);
++    R visitExpressionStmt(Expression stmt);
++    R visitIfStmt(If stmt);
++    R visitPrintStmt(Print stmt);
++    R visitVarStmt(Var stmt);
++    R visitWhileStmt(While stmt);
++  }
++  static class Block extends Stmt {
++    Block(List<Stmt> statements) {
++      this.statements = statements;
+     }
+ 
+-    static class Block extends Stmt {
+-        Block(List<Stmt> statements) {
+-            this.statements = statements;
+-        }
+-
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitBlockStmt(this);
+-        }
+-
+-        final List<Stmt> statements;
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitBlockStmt(this);
+     }
+ 
+-    static class Expression extends Stmt {
+-        Expression(Expr expression) {
+-            this.expression = expression;
+-        }
+-
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitExpressionStmt(this);
+-        }
+-
+-        final Expr expression;
++    final List<Stmt> statements;
++  }
++  static class Expression extends Stmt {
++    Expression(Expr expression) {
++      this.expression = expression;
+     }
+ 
+-    static class If extends Stmt {
+-        If(Expr condition, Stmt thenBranch, Stmt elseBranch) {
+-            this.condition = condition;
+-            this.thenBranch = thenBranch;
+-            this.elseBranch = elseBranch;
+-        }
+-
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitIfStmt(this);
+-        }
+-
+-        final Expr condition;
+-        final Stmt thenBranch;
+-        final Stmt elseBranch;
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitExpressionStmt(this);
+     }
+ 
+-    static class Print extends Stmt {
+-        Print(Expr expression) {
+-            this.expression = expression;
+-        }
+-
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitPrintStmt(this);
+-        }
++    final Expr expression;
++  }
++  static class If extends Stmt {
++    If(Expr condition, Stmt thenBranch, Stmt elseBranch) {
++      this.condition = condition;
++      this.thenBranch = thenBranch;
++      this.elseBranch = elseBranch;
++    }
+ 
+-        final Expr expression;
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitIfStmt(this);
+     }
+ 
+-    static class Var extends Stmt {
+-        Var(Token name, Expr initializer) {
+-            this.name = name;
+-            this.initializer = initializer;
+-        }
++    final Expr condition;
++    final Stmt thenBranch;
++    final Stmt elseBranch;
++  }
++  static class Print extends Stmt {
++    Print(Expr expression) {
++      this.expression = expression;
++    }
+ 
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitVarStmt(this);
+-        }
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitPrintStmt(this);
++    }
+ 
+-        final Token name;
+-        final Expr initializer;
++    final Expr expression;
++  }
++  static class Var extends Stmt {
++    Var(Token name, Expr initializer) {
++      this.name = name;
++      this.initializer = initializer;
+     }
+ 
+-    static class While extends Stmt {
+-        While(Expr condition, Stmt body) {
+-            this.condition = condition;
+-            this.body = body;
+-        }
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitVarStmt(this);
++    }
+ 
+-        @Override
+-        <R> R accept(Visitor<R> visitor) {
+-            return visitor.visitWhileStmt(this);
+-        }
++    final Token name;
++    final Expr initializer;
++  }
++  static class While extends Stmt {
++    While(Expr condition, Stmt body) {
++      this.condition = condition;
++      this.body = body;
++    }
+ 
+-        final Expr condition;
+-        final Stmt body;
++    @Override
++    <R> R accept(Visitor<R> visitor) {
++      return visitor.visitWhileStmt(this);
+     }
+ 
+-    abstract <R> R accept(Visitor<R> visitor);
++    final Expr condition;
++    final Stmt body;
++  }
++
++  abstract <R> R accept(Visitor<R> visitor);
+ }
+diff --git a/Lox/src/com/craftinginterpreters/lox/TokenType.java b/Lox/src/com/craftinginterpreters/lox/TokenType.java
+index a62b3fa..528582e 100644
+--- a/Lox/src/com/craftinginterpreters/lox/TokenType.java
++++ b/Lox/src/com/craftinginterpreters/lox/TokenType.java
+@@ -18,5 +18,7 @@ enum TokenType {
+     AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR,
+     PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE,
+ 
++    BREAK,
++
+     EOF
+ }
+\ No newline at end of file
+diff --git a/Lox/src/com/craftinginterpreters/tool/GenerateAst.java b/Lox/src/com/craftinginterpreters/tool/GenerateAst.java
+index 95122e7..2ac3177 100644
+--- a/Lox/src/com/craftinginterpreters/tool/GenerateAst.java
++++ b/Lox/src/com/craftinginterpreters/tool/GenerateAst.java
+@@ -15,6 +15,7 @@ public class GenerateAst {
+         defineAst(outputDir, "Expr", Arrays.asList(
+                 "Assign   : Token name, Expr value",
+                 "Binary   : Expr left, Token operator, Expr right",
++                "Break    : ",
+                 "Grouping : Expr expression",
+                 "Literal  : Object value",
+                 "Logical  : Expr left, Token operator, Expr right",
+@@ -84,7 +85,12 @@ public class GenerateAst {
+         writer.println("    " + className + "(" + fieldList + ") {");
+ 
+         // Store parameters in fields.
+-        String[] fields = fieldList.split(", ");
++        String[] fields;
++        if (fieldList.isEmpty()) {
++            fields = new String[0]; // Break doesn't have field, so script crashes :(
++        } else {
++            fields = fieldList.split(", ");
++        }
+         for (String field : fields) {
+             String name = field.split(" ")[1];
+             writer.println("      this." + name + " = " + name + ";");
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/AstPrinter.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/AstPrinter.class
+index 7bf18f5..7801df1 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/AstPrinter.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/AstPrinter.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Binary.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Binary.class
+index 6e07637..6646d49 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Binary.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Binary.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Grouping.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Grouping.class
+index 59475e3..43ba9b2 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Grouping.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Grouping.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Literal.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Literal.class
+index 4817905..f3657c6 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Literal.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Literal.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Unary.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Unary.class
+index 036ef79..5470115 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Unary.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Unary.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Visitor.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Visitor.class
+index fdd4158..5a7bec7 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Visitor.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr$Visitor.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr.class
+index edda83c..e94ba74 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Expr.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Lox.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Lox.class
+index 7b7262f..d7af4c2 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Lox.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Lox.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Scanner.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Scanner.class
+index 189a0cc..b01da9e 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Scanner.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/lox/Scanner.class differ
+diff --git a/out/production/Crafting-Interpreter/com/craftinginterpreters/tool/GenerateAst.class b/out/production/Crafting-Interpreter/com/craftinginterpreters/tool/GenerateAst.class
+index 2f3d18f..2444b0a 100644
+Binary files a/out/production/Crafting-Interpreter/com/craftinginterpreters/tool/GenerateAst.class and b/out/production/Crafting-Interpreter/com/craftinginterpreters/tool/GenerateAst.class differ
